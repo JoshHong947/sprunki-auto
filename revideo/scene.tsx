@@ -47,7 +47,7 @@ const exampleData = [
 const exampleRepoName = 'redotvideo/revideo';
 const exampleRepoImage = 'https://avatars.githubusercontent.com/u/133898679';
 
-export default makeScene2D('main', function* (view) {
+export default makeScene2D(function* (view) {
 	// Get variables
 	const repoName = useScene().variables.get('repoName', exampleRepoName);
 	const repoImage = useScene().variables.get('repoImage', exampleRepoImage);

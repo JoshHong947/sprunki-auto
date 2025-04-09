@@ -1,204 +1,168 @@
 'use client';
 
-import {Player} from '@revideo/player-react';
-import {getGithubRepositoryInfo} from './actions';
-import {useState} from 'react';
-import {LoaderCircle} from 'lucide-react';
-import {parseStream} from '../utils/parse';
-import project from '@/revideo/project';
+import { useState, useRef } from 'react';
+import { VideoUploader } from './components/VideoUploader';
+import { TimelineEditor } from './components/TimelineEditor';
+import { VideoPreview } from './components/VideoPreview';
 
-function Button({
-	children,
-	loading,
-	onClick,
-}: {
-	children: React.ReactNode;
-	loading: boolean;
-	onClick: () => void;
-}) {
-	return (
-		<button
-			className="text-sm flex items-center gap-x-2 rounded-md p-2 bg-gray-200 text-gray-700 hover:bg-gray-300"
-			onClick={() => onClick()}
-			disabled={loading}
-		>
-			{loading && <LoaderCircle className="animate-spin h-4 w-4 text-gray-700" />}
-			{children}
-		</button>
-	);
-}
-
-function RenderComponent({
-	stargazerTimes,
-	repoName,
-	repoImage,
-}: {
-	stargazerTimes: number[];
-	repoName: string;
-	repoImage: string | null | undefined;
-}) {
-	const [renderLoading, setRenderLoading] = useState(false);
-	const [progress, setProgress] = useState(0);
-	const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
-
-	/**
-	 * Render the video.
-	 */
-	async function render() {
-		setRenderLoading(true);
-		const res = await fetch('/api/render', {
-			method: 'POST',
-			headers: {
-				// eslint-disable-next-line @typescript-eslint/naming-convention
-				'Content-Type': 'application/json',
-			},
-			body: JSON.stringify({
-				variables: {
-					data: stargazerTimes.length ? stargazerTimes : undefined,
-					repoName: repoName || undefined,
-					repoImage: repoImage || undefined,
-				},
-				streamProgress: true,
-			}),
-		}).catch((e) => console.log(e));
-
-		if (!res) {
-			alert('Failed to render video.');
-			return;
-		}
-
-		const downloadUrl = await parseStream(res.body!.getReader(), (p) => setProgress(p));
-		setRenderLoading(false);
-		setDownloadUrl(downloadUrl);
-	}
-
-	return (
-		<div className="flex gap-x-4">
-			{/* Progress bar */}
-			<div className="text-sm flex-1 bg-gray-100 rounded-md overflow-hidden">
-				<div
-					className="text-gray-600 bg-gray-400 h-full flex items-center px-4 transition-all transition-200"
-					style={{
-						width: `${Math.round(progress * 100)}%`,
-					}}
-				>
-					{Math.round(progress * 100)}%
-				</div>
-			</div>
-			{downloadUrl ? (
-				<a
-					href={downloadUrl}
-					download
-					className="text-sm flex items-center gap-x-2 rounded-md p-2 bg-green-200 text-gray-700 hover:bg-gray-300"
-				>
-					Download video
-				</a>
-			) : (
-				<Button onClick={() => render()} loading={renderLoading}>
-					Render video
-				</Button>
-			)}
-		</div>
-	);
+interface TimeSegment {
+	start: number;
+	end: number;
 }
 
 export default function Home() {
-	const [repoName, setRepoName] = useState<string>('');
-	const [repoImage, setRepoImage] = useState<string | null>();
-	const [stargazerTimes, setStargazerTimes] = useState<number[]>([]);
+	const [videoFile, setVideoFile] = useState<File | null>(null);
+	const [timeSegments, setTimeSegments] = useState<TimeSegment[]>([]);
+	const [title, setTitle] = useState('');
+	const [backgroundColor, setBackgroundColor] = useState('#FFD700');
+	const [textColor, setTextColor] = useState('#FFFFFF');
+	const [isGenerating, setIsGenerating] = useState(false);
+	const [generatedVideoUrls, setGeneratedVideoUrls] = useState<string[]>([]);
 
-	const [githubLoading, setGithubLoading] = useState(false);
-	const [needsKey, setNeedsKey] = useState(false);
-	const [key, setKey] = useState('');
-	const [error, setError] = useState<string | null>();
+	const handleVideoUpload = (file: File) => {
+		setVideoFile(file);
+		// Clear previous segments and generated videos when uploading a new video
+		setTimeSegments([]);
+		setGeneratedVideoUrls([]);
+	};
 
-	/**
-	 * Get information about the repository from Github.
-	 */
-	async function fetchInformation(repoName: `${string}/${string}`, key: string) {
-		setGithubLoading(true);
-		const response = await getGithubRepositoryInfo(repoName, key ?? undefined);
-		setGithubLoading(false);
+	const handleTimeSegmentsChange = (segments: TimeSegment[]) => {
+		setTimeSegments(segments);
+		// Clear previous generated videos when changing segments
+		setGeneratedVideoUrls([]);
+	};
 
-		if (response.status === 'rate-limit') {
-			setNeedsKey(true);
+	const handleExport = async () => {
+		if (!videoFile || timeSegments.length === 0) {
+			alert('请先上传视频并设置时间段');
 			return;
 		}
 
-		if (response.status === 'error') {
-			setError('Failed to fetch repository information from Github.');
-			return;
+		try {
+			setIsGenerating(true);
+			
+			// Create FormData with all required information
+			const formData = new FormData();
+			formData.append('video', videoFile);
+			formData.append('title', title);
+			formData.append('backgroundColor', backgroundColor);
+			formData.append('textColor', textColor);
+			formData.append('segments', JSON.stringify(timeSegments));
+			
+			// Call the API endpoint
+			const response = await fetch('/api/render', {
+				method: 'POST',
+				body: formData,
+			});
+			
+			if (!response.ok) {
+				throw new Error('渲染视频失败');
+			}
+			
+			const result = await response.json();
+			setGeneratedVideoUrls(result.videoUrls);
+		} catch (error) {
+			console.error('视频生成错误:', error);
+			alert('生成视频时出错，请重试');
+		} finally {
+			setIsGenerating(false);
 		}
-
-		setStargazerTimes(response.stargazerTimes);
-		setRepoImage(response.repoImage);
-	}
+	};
 
 	return (
-		<>
-			<div className="m-auto p-12 max-w-7xl flex flex-col gap-y-4">
-				<div>
-					<div className="text-sm text-gray-700 mb-2">Repository</div>
-					<div className="flex gap-x-4 text-sm">
-						<input
-							className="flex-1 rounded-md p-2 bg-gray-200 focus:outline-none placeholder:text-gray-400"
-							placeholder="redotvideo/revideo"
-							value={repoName}
-							onChange={(e) => setRepoName(e.target.value)}
-						/>
-						{!needsKey && (
-							<Button
-								loading={githubLoading}
-								onClick={() => fetchInformation(repoName as `${string}/${string}`, key)}
-							>
-								Fetch information
-							</Button>
+		<main className="min-h-screen p-8 bg-gray-100">
+			<div className="max-w-6xl mx-auto space-y-8">
+				<h1 className="text-3xl font-bold text-center mb-8">视频分割工具</h1>
+				
+				<div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+					<div className="space-y-6">
+						<VideoUploader onUpload={handleVideoUpload} />
+						
+						<div className="bg-white p-6 rounded-lg shadow">
+							<h2 className="text-xl font-semibold mb-4">标题设置</h2>
+							<input
+								type="text"
+								value={title}
+								onChange={(e) => setTitle(e.target.value)}
+								placeholder="输入视频标题"
+								className="w-full p-2 border rounded"
+							/>
+							
+							<div className="mt-4 space-y-2">
+								<div>
+									<label className="block text-sm font-medium">背景颜色</label>
+									<input
+										type="color"
+										value={backgroundColor}
+										onChange={(e) => setBackgroundColor(e.target.value)}
+										className="mt-1"
+									/>
+								</div>
+								
+								<div>
+									<label className="block text-sm font-medium">文字颜色</label>
+									<input
+										type="color"
+										value={textColor}
+										onChange={(e) => setTextColor(e.target.value)}
+										className="mt-1"
+									/>
+								</div>
+							</div>
+						</div>
+					</div>
+
+					<div className="space-y-6">
+						{videoFile && (
+							<>
+								<VideoPreview file={videoFile} />
+								<TimelineEditor
+									videoFile={videoFile}
+									onTimePointsChange={handleTimeSegmentsChange}
+								/>
+							</>
 						)}
 					</div>
 				</div>
-				{needsKey && (
-					<div>
-						<div className="text-sm text-blue-600 mb-2">
-							You hit the Github API rate-limit. Please provide your own key. Requests to Github are
-							made directly and the key stays on your device.
-						</div>
-						<div className="flex gap-x-4 text-sm">
-							<input
-								className="flex-1 rounded-md p-2 bg-gray-200 focus:outline-none placeholder:text-gray-400"
-								placeholder="ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-								value={key}
-								onChange={(e) => setKey(e.target.value)}
-							/>
-							<Button
-								loading={githubLoading}
-								onClick={() => fetchInformation(repoName as `${string}/${string}`, key)}
-							>
-								Fetch information
-							</Button>
+
+				<div className="flex justify-center mt-8">
+					<button
+						onClick={handleExport}
+						className="bg-blue-500 text-white px-6 py-2 rounded-lg hover:bg-blue-600 transition-colors"
+						disabled={!videoFile || timeSegments.length === 0 || isGenerating}
+					>
+						{isGenerating ? '正在生成...' : '生成视频'}
+					</button>
+				</div>
+				
+				{/* 生成的视频预览 */}
+				{generatedVideoUrls.length > 0 && (
+					<div className="space-y-4">
+						<h2 className="text-xl font-semibold">生成的视频：</h2>
+						<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+							{generatedVideoUrls.map((url, index) => (
+								<div key={index} className="bg-white p-4 rounded-lg shadow">
+									<h3 className="text-lg font-medium mb-2">片段 {index + 1}</h3>
+									<video 
+										controls 
+										src={url} 
+										className="w-full rounded"
+									/>
+									<div className="mt-2 flex justify-end">
+										<a 
+											href={url} 
+											download={`segment-${index + 1}.mp4`}
+											className="bg-green-500 text-white px-4 py-1 rounded hover:bg-green-600 text-sm"
+										>
+											下载
+										</a>
+									</div>
+								</div>
+							))}
 						</div>
 					</div>
 				)}
-				{error && <div className="text-sm text-red-600">{error}</div>}
-				<div>
-					<div className="rounded-lg overflow-hidden">
-						{/* You can find the scene code inside revideo/src/scenes/example.tsx */}
-						<Player
-							project={project}
-							controls={true}
-							variables={{
-								data: stargazerTimes.length > 0 ? stargazerTimes : undefined,
-								repoName: repoName ? repoName : undefined,
-								repoImage: repoImage ? repoImage : undefined,
-							}}
-						/>
-					</div>
-				</div>
-				<RenderComponent
-					stargazerTimes={stargazerTimes}
-					repoName={repoName}
-					repoImage={repoImage}
-				/>
 			</div>
-		</>
+		</main>
 	);
 }
